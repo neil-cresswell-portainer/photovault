@@ -18,6 +18,8 @@ docker run -d \
   -v photovault_data:/app/data \
   neilcresswell/photovault:latest
 ```
+### OR, the not so quick..
+
 ### 1. Build the image
 
 ```bash
