@@ -5,7 +5,19 @@ iOS Photos-style web app for your PC photo library. Access it from your iPhone (
 ---
 
 ## Quick start
+### 0. Run from DockerHub
+```bash
+docker pull neilcresswell/photovault:latest
 
+docker run -d \
+  --name photovault \
+  --restart unless-stopped \
+  -p 3737:3737 \
+  -e 'VAULT_PASSWORD=yourpassword' \
+  -v /path/to/your/photos:/photos:ro \
+  -v photovault_data:/app/data \
+  neilcresswell/photovault:latest
+```
 ### 1. Build the image
 
 ```bash
