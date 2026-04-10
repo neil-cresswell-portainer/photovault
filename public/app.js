@@ -510,12 +510,12 @@
   }
 
   // ── PLACES VIEW ───────────────────────────────────────────────────────────
-  // Geocodes cluster centroids lazily and updates labels as results arrive
+  // Collapsible location rows. Tap a location to expand/collapse its photos.
   function PlacesView({ media, onItemPress }) {
     const [clusters, setClusters] = useState(() => buildLocationClusters(media));
+    const [expanded, setExpanded] = useState(new Set());
 
     useEffect(() => {
-      // Geocode each cluster that has coordinates
       let cancelled = false;
       clusters.forEach((cluster, idx) => {
         if (!cluster.lat || !cluster.lng) return;
@@ -525,31 +525,75 @@
         });
       });
       return () => { cancelled = true; };
-    }, []); // run once on mount
+    }, []);
+
+    const toggle = (key) => setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
 
     return React.createElement('div', { style: { paddingBottom: 'env(safe-area-inset-bottom)' } },
-      clusters.map(cluster =>
-        React.createElement('div', { key: cluster.label + cluster.ts },
+      clusters.map(cluster => {
+        const key  = cluster.label + cluster.ts;
+        const open = expanded.has(key);
+        return React.createElement('div', { key },
+          // Location row header -- tap to toggle
           React.createElement('div', {
-            style: { padding: '16px 16px 6px', display: 'flex', alignItems: 'center', gap: 8 }
+            onClick: () => toggle(key),
+            style: {
+              padding: '14px 16px',
+              display: 'flex', alignItems: 'center', gap: 10,
+              cursor: 'pointer',
+              borderBottom: '1px solid #1c1c1e',
+              userSelect: 'none',
+            }
           },
-            cluster.lat && React.createElement('span', { style: { fontSize: 16 } }, '📍'),
-            React.createElement('span', {
-              style: { fontSize: 18, fontWeight: 700, color: '#fff' }
-            }, cluster.label),
-            React.createElement('span', {
-              style: { fontSize: 13, color: '#48484a', marginLeft: 'auto' }
-            }, cluster.items.length.toLocaleString())
+            // Cover thumb
+            cluster.items[0] && React.createElement('div', {
+              style: {
+                width: 52, height: 52, borderRadius: 8, overflow: 'hidden',
+                flexShrink: 0, background: '#2c2c2e',
+              }
+            },
+              React.createElement('img', {
+                src: thumbUrl(cluster.items[0].id),
+                loading: 'lazy',
+                style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+              })
+            ),
+            // Label + count
+            React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+              React.createElement('div', {
+                style: { color: '#fff', fontSize: 16, fontWeight: 600,
+                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+              },
+                (cluster.lat ? '📍 ' : '') + cluster.label
+              ),
+              React.createElement('div', { style: { color: '#48484a', fontSize: 13, marginTop: 2 } },
+                cluster.items.length.toLocaleString() + ' item' + (cluster.items.length === 1 ? '' : 's')
+              )
+            ),
+            // Chevron
+            React.createElement('div', {
+              style: {
+                color: '#48484a', fontSize: 14, fontWeight: 600,
+                transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition: 'transform 0.2s',
+                flexShrink: 0,
+              }
+            }, '›')
           ),
-          React.createElement('div', {
-            style: { display: 'flex', flexWrap: 'wrap', gap: '1px' }
+          // Expandable photo grid
+          open && React.createElement('div', {
+            style: { display: 'flex', flexWrap: 'wrap', gap: '1px', marginBottom: 1 }
           },
             cluster.items.map(item =>
               React.createElement(Thumb, { key: item.id, item, onPress: onItemPress, cols: 3 })
             )
           )
-        )
-      )
+        );
+      })
     );
   }
 
@@ -663,13 +707,82 @@
     );
   }
 
-  // ── GRID VIEW ────────────────────────────────────────────────────────────
-  function GridView({ groups, onItemPress }) {
+  // ── SUMMARY VIEW (Years / Months) ────────────────────────────────────────
+  // Shows one cover card per group. Tap to drill into that group's full grid.
+  // parentLabel + onBack are supplied when shown as level-1 (months within a year).
+  function SummaryView({ groups, onDrillDown, parentLabel, onBack }) {
+    const COLS = 2;
+    return React.createElement('div', { style: { paddingBottom: 'env(safe-area-inset-bottom)', padding: '8px 2px' } },
+      // Back button when showing months-within-a-year
+      parentLabel && React.createElement('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px 10px', cursor: 'pointer' },
+        onClick: onBack,
+      },
+        React.createElement('span', { style: { color: '#1c6ef5', fontSize: 17 } }, '‹'),
+        React.createElement('span', { style: { color: '#1c6ef5', fontSize: 16 } }, parentLabel)
+      ),
+      React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '2px' } },
+        groups.map(group => {
+          const cover = group.items[0];
+          const w = `calc(${100 / COLS}% - 1px)`;
+          return React.createElement('div', {
+            key: group.label,
+            onClick: () => onDrillDown(group),
+            style: {
+              width: w, position: 'relative', cursor: 'pointer',
+              aspectRatio: '1 / 1', overflow: 'hidden', background: '#1c1c1e',
+            }
+          },
+            cover && React.createElement('img', {
+              src: thumbUrl(cover.id),
+              loading: 'lazy',
+              style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+            }),
+            // Gradient overlay + label
+            React.createElement('div', {
+              style: {
+                position: 'absolute', inset: 0,
+                background: 'linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 50%)',
+                pointerEvents: 'none',
+              }
+            }),
+            React.createElement('div', {
+              style: {
+                position: 'absolute', bottom: 10, left: 12, right: 12,
+                pointerEvents: 'none',
+              }
+            },
+              React.createElement('div', {
+                style: { color: '#fff', fontSize: 17, fontWeight: 700, lineHeight: 1.2 }
+              }, group.label),
+              React.createElement('div', {
+                style: { color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 }
+              }, group.items.length.toLocaleString() + ' items')
+            )
+          );
+        })
+      )
+    );
+  }
+
+  // ── GRID VIEW (Days — full flat grid) ─────────────────────────────────────
+  function GridView({ groups, onItemPress, drillLabel, onBack }) {
     return React.createElement('div', { style: { paddingBottom: 'env(safe-area-inset-bottom)' } },
+      // Back button shown when drilled into a specific month/year
+      drillLabel && React.createElement('div', {
+        style: {
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '10px 16px 4px', cursor: 'pointer',
+        },
+        onClick: onBack,
+      },
+        React.createElement('span', { style: { color: '#1c6ef5', fontSize: 17 } }, '‹'),
+        React.createElement('span', { style: { color: '#1c6ef5', fontSize: 16 } }, drillLabel)
+      ),
       groups.map(group =>
         React.createElement('div', { key: group.label, 'data-group-id': group.label },
           React.createElement('div', {
-            style: { padding: '16px 16px 8px', fontSize: 18, fontWeight: 700, color: '#fff' }
+            style: { padding: '12px 16px 6px', fontSize: 15, fontWeight: 600, color: '#8e8e93' }
           }, group.label),
           React.createElement('div', {
             style: { display: 'flex', flexWrap: 'wrap', gap: '1px' }
@@ -691,7 +804,10 @@
     const [viewItem, setViewItem]   = useState(null);
     const [tab, setTab]             = useState('days');
     const [filter, setFilter]       = useState('all'); // all | photos | videos
-    const scrollRef = useRef(null);
+    const [drillGroup, setDrillGroup]   = useState(null); // year group drilled into
+    const [drillMonth, setDrillMonth]   = useState(null); // month group drilled into (second level)
+    const scrollRef    = useRef(null);
+    const savedScrollY  = useRef(0);  // persists scroll position across viewer open/close
 
     useEffect(() => {
       const token = TokenStore.get();
@@ -735,15 +851,44 @@
       return groupBy(filteredMedia, i => fmt.date(i.date));
     }, [filteredMedia, tab]);
 
+    // Level 1 drill: year → months-within-that-year summary
+    const drilledMonths = useMemo(() => {
+      if (!drillGroup) return null;
+      return groupBy(drillGroup.items, i => fmt.month(i.date));
+    }, [drillGroup]);
+
+    // Level 2 drill: month → days-within-that-month grid
+    const drilledDays = useMemo(() => {
+      if (!drillMonth) return null;
+      return groupBy(drillMonth.items, i => fmt.date(i.date));
+    }, [drillMonth]);
+
     const allItems = useMemo(() => {
       if (tab === 'places') return filteredMedia;
+      if (drilledDays)   return drilledDays.flatMap(g => g.items);
+      if (drilledMonths) return drilledMonths.flatMap(g => g.items);
       return groups.flatMap(g => g.items);
-    }, [groups, tab, filteredMedia]);
+    }, [groups, drilledMonths, drilledDays, tab, filteredMedia]);
 
-    const openItem = useCallback((item) => { setViewItem(item); setScreen('viewer'); }, []);
+    const openItem = useCallback((item) => {
+      // Save current scroll position before entering viewer
+      savedScrollY.current = scrollRef.current?.scrollTop || 0;
+      setViewItem(item);
+      setScreen('viewer');
+    }, []);
 
-    // Reset scroll position when filter changes
-    useEffect(() => { scrollRef.current?.scrollTo(0, 0); }, [filter]);
+    // Reset scroll + drill state when filter or tab changes
+    useEffect(() => { scrollRef.current?.scrollTo(0, 0); setDrillGroup(null); setDrillMonth(null); }, [filter, tab]);
+
+    // Restore scroll position when returning from viewer
+    useEffect(() => {
+      if (screen === 'library' && savedScrollY.current > 0) {
+        // requestAnimationFrame ensures the scroll container has rendered and has height
+        requestAnimationFrame(() => {
+          scrollRef.current?.scrollTo({ top: savedScrollY.current, behavior: 'instant' });
+        });
+      }
+    }, [screen]);
 
     if (authState === 'checking') {
       return React.createElement('div', {
@@ -833,10 +978,68 @@
               }, 'No media found')
             : tab === 'places'
               ? React.createElement(PlacesView, { media: filteredMedia, onItemPress: openItem })
-              : React.createElement(GridView, { groups, onItemPress: openItem })
+
+              // ── YEARS tab ────────────────────────────────────────────────
+              // Level 0: year summary cards
+              : tab === 'years' && !drillGroup
+                ? React.createElement(SummaryView, {
+                    groups,
+                    onDrillDown: (group) => { setDrillGroup(group); setDrillMonth(null); scrollRef.current?.scrollTo(0, 0); },
+                  })
+              // Level 1: month summary cards within a year
+              : tab === 'years' && drillGroup && !drillMonth
+                ? React.createElement(SummaryView, {
+                    groups: drilledMonths,
+                    parentLabel: drillGroup.label,
+                    onBack: () => { setDrillGroup(null); scrollRef.current?.scrollTo(0, 0); },
+                    onDrillDown: (month) => { setDrillMonth(month); scrollRef.current?.scrollTo(0, 0); },
+                  })
+              // Level 2: day grid within a month
+              : tab === 'years' && drillGroup && drillMonth
+                ? React.createElement(GridView, {
+                    groups: drilledDays,
+                    onItemPress: openItem,
+                    drillLabel: drillMonth.label,
+                    onBack: () => { setDrillMonth(null); scrollRef.current?.scrollTo(0, 0); },
+                  })
+
+              // ── MONTHS tab ───────────────────────────────────────────────
+              // Level 0: month summary cards
+              : tab === 'months' && !drillGroup
+                ? React.createElement(SummaryView, {
+                    groups,
+                    onDrillDown: (group) => { setDrillGroup(group); scrollRef.current?.scrollTo(0, 0); },
+                  })
+              // Level 1: day grid within a month
+              : tab === 'months' && drillGroup
+                ? React.createElement(GridView, {
+                    groups: groupBy(drillGroup.items, i => fmt.date(i.date)),
+                    onItemPress: openItem,
+                    drillLabel: drillGroup.label,
+                    onBack: () => { setDrillGroup(null); scrollRef.current?.scrollTo(0, 0); },
+                  })
+
+              // ── DAYS tab ─────────────────────────────────────────────────
+              : React.createElement(GridView, {
+                  groups,
+                  onItemPress: openItem,
+                })
         ),
-        tab !== 'places' && media.length > 0 &&
-          React.createElement(Scrubber, { groups, scrollRef, tab }),
+        tab !== 'places' && media.length > 0 && (() => {
+          // Determine which groups and tab-mode to pass the scrubber
+          if (tab === 'years' && drillGroup && drillMonth) {
+            return React.createElement(Scrubber, { groups: drilledDays, scrollRef, tab: 'days' });
+          }
+          if (tab === 'years' && drillGroup && !drillMonth) {
+            return React.createElement(Scrubber, { groups: drilledMonths, scrollRef, tab: 'months' });
+          }
+          if (tab === 'months' && drillGroup) {
+            return React.createElement(Scrubber, { groups: groupBy(drillGroup.items, i => fmt.date(i.date)), scrollRef, tab: 'days' });
+          }
+          // Summary views: no scrubber needed (grid is short enough to scroll)
+          if ((tab === 'years' || tab === 'months') && !drillGroup) return null;
+          return React.createElement(Scrubber, { groups, scrollRef, tab });
+        })(),
       ),
 
       React.createElement('div', { style: { height: 'env(safe-area-inset-bottom)', background: '#000' } })
