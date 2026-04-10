@@ -1,0 +1,20 @@
+{
+  "name": "photovault",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "cors": "^2.8.6",
+    "exifreader": "^4.38.1",
+    "express": "^5.2.1",
+    "fluent-ffmpeg": "^2.1.3",
+    "sharp": "^0.34.5"
+  }
+}
