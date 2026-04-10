@@ -30,6 +30,32 @@
     return `${API}/api/file/${id}?_t=${encodeURIComponent(TokenStore.get() || '')}`;
   }
 
+  // ── CONCURRENCY-LIMITED THUMBNAIL LOADER ────────────────────────────────
+  // Keeps at most MAX_CONCURRENT image loads in-flight at once.
+  // Thumbnails are only requested when they enter the viewport (IntersectionObserver).
+  // Over a slow remote connection this prevents the connection from being saturated
+  // by hundreds of simultaneous requests, which also blocks UI interactions.
+  const MAX_CONCURRENT = 6;
+  let activeLoads  = 0;
+  const thumbQueue = []; // { el, src, resolve }
+
+  function drainThumbQueue() {
+    while (activeLoads < MAX_CONCURRENT && thumbQueue.length > 0) {
+      const { el, src, resolve } = thumbQueue.shift();
+      if (!el.isConnected) { resolve(false); continue; } // element left DOM while queued
+      activeLoads++;
+      el.onload = el.onerror = () => { activeLoads--; resolve(true); drainThumbQueue(); };
+      el.src = src;
+    }
+  }
+
+  function queueThumb(el, src) {
+    return new Promise(resolve => {
+      thumbQueue.push({ el, src, resolve });
+      drainThumbQueue();
+    });
+  }
+
   // ── REVERSE GEOCODING ─────────────────────────────────────────────────────
   // Nominatim (OpenStreetMap) -- free, no API key, 1 req/sec rate limit.
   // Results cached in sessionStorage so we only geocode once per session.
@@ -210,12 +236,36 @@
   }
 
   // ── THUMB ─────────────────────────────────────────────────────────────────
-  // Uses native <img> with ?_t= token query param -- browser handles lazy loading
-  // and HTTP caching natively. No JS blob fetch, no concurrency issues.
+  // IntersectionObserver triggers load only when thumbnail scrolls into view.
+  // Actual fetch is queued through the concurrency limiter above.
   function Thumb({ item, onPress, cols }) {
     const [loaded, setLoaded] = useState(false);
     const [error, setError]   = useState(false);
-    const size = `calc(${100 / cols}vw - 1px)`;
+    const imgRef  = useRef(null);
+    const size    = `calc(${100 / cols}vw - 1px)`;
+
+    useEffect(() => {
+      if (!item.thumb || !imgRef.current) return;
+      const img = imgRef.current;
+      const src = thumbUrl(item.id);
+
+      // If already cached by browser, it will fire load immediately
+      if (img.complete && img.naturalWidth) { setLoaded(true); return; }
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries[0].isIntersecting) return;
+          observer.disconnect();
+          queueThumb(img, src).then(() => {
+            if (img.naturalWidth) setLoaded(true);
+            else setError(true);
+          });
+        },
+        { rootMargin: '300px' } // start loading 300px before entering viewport
+      );
+      observer.observe(img);
+      return () => observer.disconnect();
+    }, [item.id]);
 
     return React.createElement('div', {
       style: {
@@ -226,14 +276,11 @@
     },
       item.thumb && !error
         ? React.createElement('img', {
-            src: thumbUrl(item.id),
-            loading: 'lazy',          // browser-native lazy load
+            ref: imgRef,
             decoding: 'async',
-            onLoad:  () => setLoaded(true),
-            onError: () => setError(true),
             style: {
               width: '100%', height: '100%', objectFit: 'cover', display: 'block',
-              opacity: loaded ? 1 : 0, transition: 'opacity 0.2s',
+              opacity: loaded ? 1 : 0, transition: 'opacity 0.25s',
             }
           })
         : React.createElement('div', {
@@ -802,7 +849,7 @@
     const [screen, setScreen]       = useState('scan');
     const [media, setMedia]         = useState([]);
     const [viewItem, setViewItem]   = useState(null);
-    const [tab, setTab]             = useState('days');
+    const [tab, setTab]             = useState('years');
     const [filter, setFilter]       = useState('all'); // all | photos | videos
     const [drillGroup, setDrillGroup]   = useState(null); // year group drilled into
     const [drillMonth, setDrillMonth]   = useState(null); // month group drilled into (second level)
@@ -847,6 +894,8 @@
       if (!filteredMedia.length) return [];
       if (tab === 'years')  return groupBy(filteredMedia, i => fmt.year(i.date));
       if (tab === 'months') return groupBy(filteredMedia, i => fmt.month(i.date));
+      // Days: newest first (reverse sort) so scrolling starts at most recent
+      if (tab === 'days') return groupBy(filteredMedia, i => fmt.date(i.date)).reverse();
       // places handled by PlacesView separately
       return groupBy(filteredMedia, i => fmt.date(i.date));
     }, [filteredMedia, tab]);
@@ -857,10 +906,10 @@
       return groupBy(drillGroup.items, i => fmt.month(i.date));
     }, [drillGroup]);
 
-    // Level 2 drill: month → days-within-that-month grid
+    // Level 2 drill: month → days-within-that-month grid (newest first)
     const drilledDays = useMemo(() => {
       if (!drillMonth) return null;
-      return groupBy(drillMonth.items, i => fmt.date(i.date));
+      return groupBy(drillMonth.items, i => fmt.date(i.date)).reverse();
     }, [drillMonth]);
 
     const allItems = useMemo(() => {
@@ -1013,7 +1062,7 @@
               // Level 1: day grid within a month
               : tab === 'months' && drillGroup
                 ? React.createElement(GridView, {
-                    groups: groupBy(drillGroup.items, i => fmt.date(i.date)),
+                    groups: groupBy(drillGroup.items, i => fmt.date(i.date)).reverse(),
                     onItemPress: openItem,
                     drillLabel: drillGroup.label,
                     onBack: () => { setDrillGroup(null); scrollRef.current?.scrollTo(0, 0); },
@@ -1034,7 +1083,7 @@
             return React.createElement(Scrubber, { groups: drilledMonths, scrollRef, tab: 'months' });
           }
           if (tab === 'months' && drillGroup) {
-            return React.createElement(Scrubber, { groups: groupBy(drillGroup.items, i => fmt.date(i.date)), scrollRef, tab: 'days' });
+            return React.createElement(Scrubber, { groups: groupBy(drillGroup.items, i => fmt.date(i.date)).reverse(), scrollRef, tab: 'days' });
           }
           // Summary views: no scrubber needed (grid is short enough to scroll)
           if ((tab === 'years' || tab === 'months') && !drillGroup) return null;
